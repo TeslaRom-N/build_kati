@@ -25,6 +25,7 @@
 
 #include "eval.h"
 #include "fileutil.h"
+#include "flags.h"
 #include "log.h"
 #include "rule.h"
 #include "stats.h"
@@ -214,6 +215,8 @@ struct RuleMerger {
       if (r == primary_rule)
         continue;
       FillDepNodeFromRule(output, r, n);
+      if (n->loc.filename == NULL)
+        n->loc = r->loc;
     }
   }
 };
@@ -228,6 +231,7 @@ DepNode::DepNode(Symbol o, bool p, bool r)
       is_restat(r),
       rule_vars(NULL),
       depfile_var(NULL),
+      ninja_pool_var(NULL),
       output_pattern(Symbol::IsUninitialized()) {
   g_dep_node_pool->push_back(this);
 }
@@ -241,7 +245,8 @@ class DepBuilder {
         rule_vars_(rule_vars),
         implicit_rules_(new RuleTrie()),
         first_rule_(Symbol::IsUninitialized{}),
-        depfile_var_name_(Intern(".KATI_DEPFILE")) {
+        depfile_var_name_(Intern(".KATI_DEPFILE")),
+        ninja_pool_var_name_(Intern(".KATI_NINJA_POOL")) {
     ScopedTimeReporter tr("make dep (populate)");
     PopulateRules(rules);
     // TODO?
@@ -287,7 +292,6 @@ class DepBuilder {
       ".EXPORT_ALL_VARIABLES",
       ".NOTPARALLEL",
       ".ONESHELL",
-      ".POSIX",
       NULL
     };
     for (const char** p = kUnsupportedBuiltinTargets; *p; p++) {
@@ -532,7 +536,7 @@ class DepBuilder {
     if (found == suffix_rules_.end())
       return rule_merger;
 
-    for (shared_ptr<Rule> irule : found->second) {
+    for (const shared_ptr<Rule> &irule : found->second) {
       CHECK(irule->inputs.size() == 1);
       Symbol input = ReplaceSuffix(output, irule->inputs[0]);
       if (!Exists(input))
@@ -605,6 +609,8 @@ class DepBuilder {
 
         if (name == depfile_var_name_) {
           n->depfile_var = new_var;
+        } else if (name == ninja_pool_var_name_) {
+          n->ninja_pool_var = new_var;
         } else {
           sv.emplace_back(new ScopedVar(cur_rule_vars_.get(), name, new_var));
         }
@@ -649,6 +655,7 @@ class DepBuilder {
   unordered_set<Symbol> phony_;
   unordered_set<Symbol> restat_;
   Symbol depfile_var_name_;
+  Symbol ninja_pool_var_name_;
 };
 
 void MakeDep(Evaluator* ev,
